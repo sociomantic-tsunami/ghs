@@ -1,0 +1,9 @@
+
+# Global configuration for ghs.
+
+# Default global options
+# debug = False
+# base_url = 'https://api.github.com'
+script_dirs = ['~/.ghscripts', '/usr/share/ghs/scripts']
+
+# vim: set ft=python :

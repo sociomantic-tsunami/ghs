@@ -31,8 +31,6 @@ install: ghs ghs.1 man.rst $(wildcard scripts/*.py)
 			$(DESTDIR)$(prefix)/bin/ghs
 	sed -i 's|^#!/usr/bin/env python$$|#!/usr/bin/env $(PYTHON)|' \
 			$(DESTDIR)$(prefix)/bin/ghs
-	sed -i 's|^	script_dirs = \["~/\.ghscripts"\],$$|	script_dirs = ["~/.ghscripts", "$(prefix)/share/ghs/scripts"],|' \
-			$(DESTDIR)$(prefix)/bin/ghs
 	install -m 755 -d $(DESTDIR)$(prefix)/share/ghs/scripts
 	install -m 644 -D -t $(DESTDIR)$(prefix)/share/ghs/scripts scripts/*.py
 	install -m 644 -D ghs.1 $(DESTDIR)$(prefix)/share/man/man1/ghs.1

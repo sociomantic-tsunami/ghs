@@ -37,5 +37,7 @@ fpm -s dir -t deb -n "$pkgname" -v "$pkgversion" \
 	--category devel \
 	--depends python2.7 \
 	--deb-changelog "$changelog" \
+	--config-files /etc/ghsrc \
+	ghsrc=/etc/ghsrc \
 	install/usr=/
 
