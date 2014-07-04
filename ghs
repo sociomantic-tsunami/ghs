@@ -491,6 +491,7 @@ def main():
 			config.username, config.password)
 
 	script = load_script(args, config)
+	sys.path.insert(0, os.path.dirname(script.__file__))
 	script.main(rq, args.script_args, config)
 
 
