@@ -1,0 +1,488 @@
+#!/usr/bin/env python
+# vim: set noet :
+
+import re
+import sys
+import imp
+import json
+import base64
+import urllib
+import urllib2
+import os.path
+
+VERSION = "ghs devel"
+
+# Default configuration
+default_config = dict(
+	base_url = "https://api.github.com",
+	script_dirs = ["~/.ghscripts"],
+	debug = False,
+	oauthtoken = None,
+	username = None,
+	password = None,
+)
+class Config:
+	debug = default_config['debug']
+	def __repr__(self):
+		values = ', '.join(['%s=%r' % (k, getattr(self, k))
+				for k in dir(self) if not k.startswith('__')])
+		return 'Config(' + values + ')'
+config = Config()
+
+# Configuration is read from ~/.ghsrc, if should be a python formatted file like
+# this:
+# ---
+# profiles = dict()
+# profiles['admin'] = dict(
+# 	username = "some-admin-user",
+# 	password="SUPER SECRET",
+# )
+# profiles['me'] = dict(
+#	oauthtoken = 'some super long token given by github',
+# )
+# profiles['other-company'] = dict(
+# 	username = "my-user-company2",
+# 	password="SUPER COMPANY 2 SECRET",
+# 	debug = True, # optional
+# )
+# profiles['default'] = profiles['me']
+# ---
+# So you can define multiples profiles. The 'default' profile is special
+# because is used if you don't specify any profiles. If no default profile is
+# found and no profile was specified through the command line, no
+# authentication is used and default_base_url is used as default.
+#
+# If you don't care about profiles, you can use the old flat syntax, for
+# example:
+# ---
+# base_url = 'https://api.github.com' # optional
+# debug = True # optional
+# username = "YOURNAME-YOURLASTNAME-sociomantic"
+# password = "YOUR SUPER SECRET PASSWORD"
+# # or oauthtoken = 'some super long token given by github'
+# ---
+# And you can mix both (profiles['default'] will have precedence over the
+# global defaults.
+#
+
+
+def out(msg, *args):
+	print(msg % args)
+
+def dbg(msg, *args):
+	global config
+	if config.debug:
+		sys.stderr.write((msg + "\n") % args)
+
+def log(msg, *args):
+	sys.stderr.write((msg + "\n") % args)
+
+def die(status, fmt, *args):
+	sys.stderr.write((fmt + "\n") % args)
+	sys.exit(status)
+
+
+# Print traceback
+def print_tb():
+	from traceback import print_exception
+	(exc_type, exc_value, exc_tb) = sys.exc_info()
+	print_exception(exc_type, exc_value, exc_tb.tb_next)
+
+
+# Import a Python file by file name
+def import_file(module_name, file_name):
+	dbg("Importing module %s from file %s...", module_name, file_name)
+	try:
+		module = imp.load_source(module_name, file_name)
+	except IOError as e:
+		die(2, "Error: can't read module %s in file '%s' (%s)",
+				module_name, file_name, e)
+	except Exception as e:
+		print_tb()
+		sys.exit(10)
+	return module
+
+
+# Read and parse configuration from a configuration file for a specific profile
+def parse_config(parser, args):
+	dbg("Parsing config file %s looking for profile %s...",
+			args.config_file, args.profile)
+	try:
+		ghrc = imp.load_source('ghrc', args.config_file)
+	except IOError as e:
+		parser.error("can't read configuration file '%s' (%s)" %
+				(args.config_file, e))
+	except Exception as e:
+		print_tb()
+		parser.error("configuration file '%s' error: %s" %
+				(args.config_file, e))
+
+	global default_config
+
+	# Start with the default config
+	parsed_config = dict(default_config)
+	dbg("defaults: %s", parsed_config)
+
+	# Update with the global values
+	for var in default_config.keys():
+		if hasattr(ghrc, var):
+			parsed_config[var] = getattr(ghrc, var)
+	dbg("after globals: %s", parsed_config)
+
+	# Update with the profile
+	if hasattr(ghrc, 'profiles') and args.profile in ghrc.profiles:
+		profile = ghrc.profiles[args.profile]
+		dbg("profile %s: %s", args.profile, profile)
+		for var in default_config.keys():
+			if var in profile:
+				parsed_config[var] = profile[var]
+
+	for k, v in parsed_config.items():
+		setattr(config, k, v)
+
+	# Override configuration with command line options
+	for var in default_config.keys():
+		if var in args:
+			val = getattr(args, var)
+			if isinstance(val, list):
+				val += getattr(config, var)
+			setattr(config, var, val)
+
+	# Prioritize username/password authentication if --username was used
+	if 'username' in args:
+		config.oauthtoken = None
+
+	config.script_dirs = [os.path.expanduser(d)
+			for d in config.script_dirs]
+
+	# Fill the program name
+	config.prog = parser.prog
+
+	if config.username is not None and config.password is None:
+		parser.error("username provided but not a password")
+
+	return config
+
+
+accepted_methods = ('options', 'head', 'get', 'post', 'patch', 'put', 'delete')
+
+# Manages GitHub request handling authentication and content headers.
+#
+# The real interesting methods are created after the class declaration, for
+# each type of request: head(), get(), post(), patch(), put() and delete().
+#
+# All these methods take an URL (relative to the base_url) and optionally an
+# arbitrarily number of positional or keyword arguments (but not both at the
+# same time). The extra arguments, if present, are serialized as json and sent
+# as the request body.
+# All these methods return None if the response is empty, or the deserialized
+# json data received in the body of the response.
+#
+# Example:
+#
+#    r = req.post('/repos/sociomantic/test/labels/', name=name, color=color)
+#
+# The basic auth has priority over oauthtoken for authentication. If you want
+# to use OAuth just leave `basic_auth` and set `oauthtoken`. To fill the
+# `basic_auth` member, the `set_basic_auth()` convenient method is provided).
+#
+# See http://developer.github.com/ for more details on the GitHub API
+class RequestManager:
+
+	basic_auth = None
+	oauthtoken = None
+	links_re = re.compile(r'<([^>]+)>;.*rel=[\'"]?([^"]+)[\'"]?', re.M)
+
+	def __init__(self, base_url, oauthtoken=None,
+			username=None, password=None):
+		self.base_url = base_url
+		if oauthtoken is not None:
+			self.oauthtoken = oauthtoken
+		elif username is not None:
+			self.set_basic_auth(username, password)
+
+	# Configure the class to use basic authentication instead of OAuth
+	def set_basic_auth(self, username, password):
+		self.basic_auth = "Basic " + base64.urlsafe_b64encode("%s:%s" %
+			(username, password))
+
+	# Open an URL in an authenticated manner using the specified HTTP
+	# method. It also add other convenience headers, like Content-Type,
+	# Accept (both to json) and Content-Length).
+	def auth_urlopen(self, url, method, body):
+		req = urllib2.Request(url, body)
+		if self.basic_auth:
+			req.add_header("Authorization", self.basic_auth)
+		elif self.oauthtoken:
+			req.add_header("Authorization", "bearer " +
+					self.oauthtoken)
+		req.add_header("Content-Type", "application/json")
+		req.add_header("Accept", "application/json")
+		req.add_header("Content-Length", str(len(body) if body else 0))
+		req.get_method = lambda: method
+		dbg('%s', req.get_full_url())
+		# Hide sensitive information from DEBUG output
+		if config.debug:
+			for h in req.header_items():
+				if h[0].lower() == 'authorization':
+					dbg('%s: %s', h[0], '<hidden>')
+				else:
+					dbg('%s: %s', *h)
+		dbg('%s', req.get_data())
+		return urllib2.urlopen(req)
+
+	# Serialize args OR kwargs (they are mutually exclusive) as json.
+	def dump(self, *args, **kwargs):
+		if args and kwargs:
+			raise ValueError('args and kwargs are mutually '
+				'exclusive')
+		if args:
+			return json.dumps(args)
+		if kwargs:
+			return json.dumps(kwargs)
+		return None
+
+	# Get the next URL from the Link: header, if any
+	def get_next_url(self, response):
+		links = list()
+		for l in response.headers.get("Link", "").split(','):
+			links.extend(self.links_re.findall(l))
+		links = dict((rel, url) for url, rel in links)
+		return links.get("next", None)
+
+	# This is the real method used to do the work of the head(), get() and
+	# other high-level methods. `url` should be a relative URL for the
+	# GitHub API, `method` is the HTTP method to be used (must be in
+	# uppercase), and args/kwargs are data to be sent to the client. Only
+	# one can be specified at a time and they are serialized as json (args
+	# as a json list and kwargs as a json dictionary/object).
+	def json_req(self, url, method, *args, **kwargs):
+		if not url.startswith('http'):
+			url = self.base_url + url
+		if method.lower() in ('post', 'patch', 'put'):
+			body = self.dump(*args, **kwargs)
+		else:
+			body = None
+			url += '?' + urllib.urlencode(kwargs)
+		data = None
+		prev_data = []
+		while url:
+			dbg("Request: %s %s\n%s", method, url, body)
+			res = self.auth_urlopen(url, method, body)
+			data = res.read()
+			dbg("Response:\n%s", data)
+			if data:
+				data = json.loads(data)
+				if isinstance(data, list):
+					prev_data.extend(data)
+					data = []
+			url = self.get_next_url(res)
+		assert not (prev_data and data)
+		if prev_data:
+			data = prev_data
+		dbg("Parsed data:\n%s", data)
+		return data
+
+# Create RequestManager.head(), get(), ... methods
+# We need the make_method() function to make Python bind the method variable
+# (from the loop) early (in the loop) instead of when is called. Otherwise all
+# methods get bind with the last value of method ('delete') in this case, which
+# is not only what we want, is also very dangerous.
+def make_method(method):
+	return lambda self, url, *args, **kwargs: \
+		self.json_req(url, method, *args, **kwargs)
+for method in accepted_methods:
+	setattr(RequestManager, method, make_method(method))
+
+
+def check_main(module):
+	assert hasattr(module, 'main'), 'no main() function found'
+	from inspect import getargspec
+	(args, varargs, keywords, defaults) = getargspec(module.main)
+	if varargs is not None:
+		return True
+	nargs = len(args or []) - len(defaults or [])
+	assert len(args or []) >= 3 and nargs <= 3, \
+			'main() should accept only 3 required arguments'
+	return True
+
+def print_available_scripts(script_dirs, include_broken=False, fo=sys.stdout):
+	from glob import glob
+	scripts = dict()
+	for script in sum([glob(d + '/*.py') for d in script_dirs], []):
+		name = os.path.basename(script)[:-3]
+		if name in scripts:
+			continue
+		module = None
+		desc = '<no description>'
+
+		try:
+			module = imp.load_source(name, script)
+			check_main(module)
+			if hasattr(module, 'desc'):
+				desc = getattr(module, 'desc')
+		except IOError as e:
+			name = '!' + name
+			desc = "<file '%s' read error: %s>" % (script, e)
+		except Exception as e:
+			name = '!' + name
+			desc = "<file '%s' broken: %s>" % (script, e)
+		if include_broken or module is not None:
+			scripts[name] = desc
+
+	if not scripts:
+		return
+
+	width = max([len(n) for n in scripts])
+	for name in sorted(scripts.keys()):
+		fo.write(('  %- '+str(width)+'s\t%s\n') % (name, scripts[name]))
+
+
+def load_script(args, config):
+	if not args.script.endswith('.py'):
+		errors = dict()
+		for d in config.script_dirs:
+			script_file = d + '/' + args.script + '.py'
+			script_name = os.path.basename(script_file)[:-3]
+			try:
+				script = imp.load_source(script_name, script_file)
+				check_main(script)
+				break
+			except IOError as e:
+				import errno
+				if e.errno != errno.ENOENT:
+					errors[script_file] = e
+			except Exception as e:
+				errors[script_file] = e
+		else:
+			errors = '\n'.join(['%s: %s' % i for i in errors.items()])
+			if errors:
+				errors = ':\n' + errors
+			parser.error("can't find a valid script with the name "
+					"`%s` (script dirs: %s)%s" %
+					(args.script, config.script_dirs, errors))
+	else:
+		script_name = os.path.basename(args.script)[:-3]
+		try:
+			script = imp.load_source(script_name, args.script)
+			check_main(script)
+		except Exception as e:
+			parser.error("can't run script `%s`: %s" %
+					(args.script, e))
+	return script
+
+
+def create_argparser():
+	global default_config
+	import argparse
+	parser = argparse.ArgumentParser(description='GitHub scripts runner.',
+			add_help=False,
+			formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+	parser.add_argument('-h', '--help', action='store_true',
+			default=argparse.SUPPRESS,
+			help='show this help message and exit')
+	parser.add_argument('--version', action='version', version=VERSION)
+	parser.add_argument('-c', '--config-file', metavar='FILE',
+			default='~/.ghsrc',
+			type=lambda s: os.path.expanduser(s),
+			help='configuration file to use')
+	parser.add_argument('-p', '--profile', metavar='NAME',
+			default='default',
+			help='profile to use from the config file')
+	parser.add_argument('-d', '--debug', action='store_true',
+			default=argparse.SUPPRESS,
+			help='show debug output (http requests, etc.)')
+	parser.add_argument('-b', '--base-url', metavar='URL',
+			default=argparse.SUPPRESS,
+			help='base URL to use to make GitHub API requests '
+			'(default: %(base_url)s)' % default_config)
+	parser.add_argument('-o', '--oauth-token', metavar='TOKEN',
+			default=argparse.SUPPRESS,
+			help='GitHub OAuth token to use to authenticate')
+	parser.add_argument('-u', '--username', metavar='USER',
+			default=argparse.SUPPRESS,
+			help='GitHub username to use to authenticate')
+	parser.add_argument('-P', '--password', metavar='PASS',
+			default=argparse.SUPPRESS,
+			help='GitHub password to use to authenticate')
+	parser.add_argument('-D', '--script-dir', metavar='DIR',
+			dest='script_dirs', action='append',
+			default=argparse.SUPPRESS,
+			help='directory where to search for scripts; can be '
+			'used multiple times, last option has priority over '
+			'the previous ones (default: %s)' %
+			', '.join(default_config['script_dirs'][::-1]))
+	parser.add_argument('-l', '--list-scripts', action='store_true',
+			default=argparse.SUPPRESS,
+			help='list available scripts and exit')
+	parser.add_argument('-L', '--list-all-scripts', action='store_true',
+			default=argparse.SUPPRESS,
+			help='list all scripts, including broken scripts '
+			' prefixed with a "!" and a description of why is '
+			'broken, and exit')
+	parser.add_argument('script', nargs='?', default=argparse.SUPPRESS,
+			help='name of the script to call, if it ends in '
+			'".py" then it is considered a path to a file '
+			'instead of a script name to look for in the '
+			'--script-dir directory')
+	parser.add_argument('script_args', metavar='...',
+			nargs=argparse.REMAINDER,
+			help='script arguments')
+
+	return parser
+
+
+def print_help(parser, fo):
+	global config
+	parser.print_help(file=fo)
+	fo.write('\n')
+	fo.write('available scripts:\n')
+	print_available_scripts(config.script_dirs, False, fo)
+
+
+def main():
+	global config
+	parser = create_argparser()
+
+	args = parser.parse_args()
+
+	# Reverse the specified script_dirs
+	if 'script_dirs' in args:
+		args.script_dirs = args.script_dirs[::-1]
+
+	config = parse_config(parser, args)
+	dbg("args: %s", args)
+	dbg("config: %s", config)
+
+	if 'help' in args:
+		print_help(parser, sys.stdout)
+		sys.exit(0)
+
+	if 'list_scripts' in args or 'list_all_scripts' in args:
+		sys.stdout.write('Available scripts:\n')
+		print_available_scripts(config.script_dirs,
+				'list_all_scripts' in args, sys.stdout)
+		sys.exit(0)
+
+	if 'script' not in args:
+		print_help(parser, sys.stderr)
+		sys.stderr.write('\n%s: error: please specify a script\n' %
+				parser.prog)
+		sys.exit(2)
+
+	rq = RequestManager(config.base_url, config.oauthtoken,
+			config.username, config.password)
+
+	script = load_script(args, config)
+	script.main(rq, args.script_args, config)
+
+
+if __name__ == '__main__':
+	try:
+		main()
+	except urllib2.HTTPError as e:
+		print e
+		print e.read()
+		print e.geturl()
+		print e.headers
+
