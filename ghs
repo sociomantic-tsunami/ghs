@@ -422,8 +422,7 @@ def create_argparser():
 			default=argparse.SUPPRESS,
 			help='directory where to search for scripts; can be '
 			'used multiple times, last option has priority over '
-			'the previous ones (default: %s)' %
-			', '.join(default_config['script_dirs'][::-1]))
+			'the previous ones')
 	parser.add_argument('-l', '--list-scripts', action='store_true',
 			default=argparse.SUPPRESS,
 			help='list available scripts and exit')
