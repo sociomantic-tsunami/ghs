@@ -232,7 +232,7 @@ class RequestManager:
 		req.add_header("Content-Type", "application/json")
 		req.add_header("Accept", "application/json")
 		req.add_header("Content-Length", str(len(body) if body else 0))
-		req.get_method = lambda: method
+		req.get_method = lambda: method.upper()
 		dbg('%s', req.get_full_url())
 		# Hide sensitive information from DEBUG output
 		if config.debug:

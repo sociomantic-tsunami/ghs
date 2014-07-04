@@ -31,7 +31,7 @@ def main(rq, args, config):
 	args = parser.parse_args(args)
 	path, opts = parse_args(args.path)
 	verb = __name__ if __name__ in VERBS else args.verb
-	res = rq.json_req(path, verb.upper(), **opts)
+	res = rq.json_req(path, verb, **opts)
 	print_obj(res)
 
 def print_dict(d, prefix=''):
