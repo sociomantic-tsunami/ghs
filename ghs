@@ -105,17 +105,14 @@ def import_file(module_name, file_name):
 
 # Read and parse configuration from a configuration file for a specific profile
 def parse_config(parser, args):
-	dbg("Parsing config file %s looking for profile %s...",
-			args.config_file, args.profile)
-	try:
-		ghrc = imp.load_source('ghrc', args.config_file)
-	except IOError as e:
-		parser.error("can't read configuration file '%s' (%s)" %
-				(args.config_file, e))
-	except Exception as e:
-		print_tb()
-		parser.error("configuration file '%s' error: %s" %
-				(args.config_file, e))
+	config_required = False
+	if not isinstance(args.config_files, list):
+		config_required = True
+		args.config_files = [args.config_files]
+	args.config_files = [os.path.expanduser(c) for c in args.config_files]
+
+	dbg("Parsing config files %s looking for profile %s...",
+			args.config_files, args.profile)
 
 	global default_config
 
@@ -123,19 +120,35 @@ def parse_config(parser, args):
 	parsed_config = dict(default_config)
 	dbg("defaults: %s", parsed_config)
 
-	# Update with the global values
-	for var in default_config.keys():
-		if hasattr(ghrc, var):
-			parsed_config[var] = getattr(ghrc, var)
-	dbg("after globals: %s", parsed_config)
+	ghrc = None
+	for config_file in args.config_files:
+		try:
+			ghrc = imp.load_source('ghrc', config_file)
+		except IOError as e:
+			from errno import ENOENT
+			if config_required or e.errno != ENOENT:
+				parser.error("can't read configuration file "
+						"'%s' (%s)" % (config_file, e))
+			continue
+		except Exception as e:
+			print_tb()
+			parser.error("configuration file '%s' error: %s" %
+					(config_file, e))
+			continue
 
-	# Update with the profile
-	if hasattr(ghrc, 'profiles') and args.profile in ghrc.profiles:
-		profile = ghrc.profiles[args.profile]
-		dbg("profile %s: %s", args.profile, profile)
+		# Update with the global values
 		for var in default_config.keys():
-			if var in profile:
-				parsed_config[var] = profile[var]
+			if hasattr(ghrc, var):
+				parsed_config[var] = getattr(ghrc, var)
+		dbg("after globals: %s", parsed_config)
+
+		# Update with the profile
+		if hasattr(ghrc, 'profiles') and args.profile in ghrc.profiles:
+			profile = ghrc.profiles[args.profile]
+			dbg("profile %s: %s", args.profile, profile)
+			for var in default_config.keys():
+				if var in profile:
+					parsed_config[var] = profile[var]
 
 	for k, v in parsed_config.items():
 		setattr(config, k, v)
@@ -383,8 +396,7 @@ def create_argparser():
 			help='show this help message and exit')
 	parser.add_argument('--version', action='version', version=VERSION)
 	parser.add_argument('-c', '--config-file', metavar='FILE',
-			default='~/.ghsrc',
-			type=lambda s: os.path.expanduser(s),
+			dest='config_files', default=['/etc/ghsrc', '~/.ghsrc'],
 			help='configuration file to use')
 	parser.add_argument('-p', '--profile', metavar='NAME',
 			default='default',

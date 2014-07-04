@@ -55,7 +55,7 @@ OPTIONS
   show program's version number and exit
 
 \-c FILE, --config-file FILE
-  configuration file to use (default: ~/.ghsrc)
+  configuration file to use (default: ~/.ghsrc, /etc/ghsrc)
 
 \-p NAME, --profile NAME
   profile to use from the config file (default: default)
@@ -209,8 +209,10 @@ option.
 FILES
 =====
 
-`~/.ghsrc`
-  Default configuration file to read.
+`/etc/ghsrc`, `~/.ghsrc`
+  Default configuration files to read. `/etc/ghsrc` is readed first, and its
+  values are overriden by `~/.ghsrc`. These files are optional, the program
+  won't complain if either don't exist.
 
 `~/.ghscripts`
   Default directory where to look for scripts.
