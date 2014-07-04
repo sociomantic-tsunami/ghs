@@ -1,0 +1,38 @@
+
+# Configuration for ghs is a Python-formatted file.
+
+# Default global options
+# debug = False
+# base_url = 'https://api.github.com'
+# script_dirs = ['~/.ghscripts']
+
+# You can define multiples profiles. The 'default' profile is special because
+# is used if you don't specify any profiles. If no default profile is found
+# and no profile was specified through the command line, no authentication is
+# used and default base_url is used as default.
+
+profiles = dict(
+	admin = dict(
+		oauthtoken = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+	),
+	user = dict(
+		# Using your user+password is possible but NOT recommended!
+		username = "mygithubuser"
+		password = "my super secret github password"
+	),
+	enterprise = dict(
+		base_url = 'https://api.example.com',
+		oauthtoken = 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
+	),
+)
+profiles['default'] = profiles['user']
+
+# If you don't care about profiles, you can use a flat syntax, for example:
+# ---
+# debug = True
+# oauthtoken = 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+# ---
+# And you can mix both (profiles['default'] will have precedence over the
+# global defaults).
+
+# vim: set ft=python :
