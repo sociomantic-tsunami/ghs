@@ -84,8 +84,8 @@ OPTIONS
   list available scripts and exit
 
 \-L, --list-all-scripts
-  list all scripts, including broken scripts prefixed with a "!" and
-  a description of why is broken, and exit
+  list all scripts, including extra information and broken scripts (prefixed
+  with a "!" and a description of why is broken) and exit
 
 
 WRITING SCRIPTS

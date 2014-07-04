@@ -319,7 +319,7 @@ def check_main(module):
 			'main() should accept only 3 required arguments'
 	return True
 
-def print_available_scripts(script_dirs, include_broken=False, fo=sys.stdout):
+def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 	from glob import glob
 	scripts = dict()
 	for script in sum([glob(d + '/*.py') for d in script_dirs], []):
@@ -331,16 +331,18 @@ def print_available_scripts(script_dirs, include_broken=False, fo=sys.stdout):
 
 		try:
 			module = imp.load_source(name, script)
-			check_main(module)
 			if hasattr(module, 'desc'):
 				desc = getattr(module, 'desc')
+			if verbose:
+				desc += ' <%s>' % script
+			check_main(module)
 		except IOError as e:
 			name = '!' + name
-			desc = "<file '%s' read error: %s>" % (script, e)
+			desc = "<%s read error: %s>" % (script, e)
 		except Exception as e:
 			name = '!' + name
-			desc = "<file '%s' broken: %s>" % (script, e)
-		if include_broken or module is not None:
+			desc = "<%s broken: %s>" % (script, e)
+		if verbose or not name.startswith('!'):
 			scripts[name] = desc
 
 	if not scripts:
@@ -428,9 +430,9 @@ def create_argparser():
 			help='list available scripts and exit')
 	parser.add_argument('-L', '--list-all-scripts', action='store_true',
 			default=argparse.SUPPRESS,
-			help='list all scripts, including broken scripts '
-			' prefixed with a "!" and a description of why is '
-			'broken, and exit')
+			help='list all scripts, including extra information '
+			'and broken scripts (prefixed with a "!" and a '
+			'description of why is broken) and exit')
 	parser.add_argument('script', nargs='?', default=argparse.SUPPRESS,
 			help='name of the script to call, if it ends in '
 			'".py" then it is considered a path to a file '
@@ -470,9 +472,13 @@ def main():
 		sys.exit(0)
 
 	if 'list_scripts' in args or 'list_all_scripts' in args:
-		sys.stdout.write('Available scripts:\n')
-		print_available_scripts(config.script_dirs,
-				'list_all_scripts' in args, sys.stdout)
+		verbose = 'list_all_scripts' in args
+		sys.stdout.write('Available scripts')
+		if verbose:
+			sys.stdout.write(' (in %s)' %
+					', '.join(config.script_dirs))
+		sys.stdout.write(':\n')
+		print_available_scripts(config.script_dirs, verbose, sys.stdout)
 		sys.exit(0)
 
 	if 'script' not in args:
