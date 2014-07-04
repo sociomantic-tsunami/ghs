@@ -98,6 +98,10 @@ looked up in them:
   A string with a brief description of what the script does. It will be used
   by the `--list-scripts` option.
 
+  If `desc = None` then the Python file will be marked as a non-script (useful
+  to add general Python modules acting as general libraries and not intended to
+  be used as scripts).
+
 `def main(rq, args, config)`
   The main function executed by `ghs`.
 

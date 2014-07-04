@@ -310,6 +310,9 @@ for method in accepted_methods:
 
 # Do some basic sanity checks on the script to see if it can be run
 def check_script(script):
+	# Silently skip scripts that shouldn't be listed
+	assert not hasattr(script, 'desc') or script.desc is not None, \
+			'is marked as a non-script (has desc=None)'
 	assert hasattr(script, 'main'), 'no main() function found'
 	from inspect import getargspec
 	(args, varargs, keywords, defaults) = getargspec(script.main)
@@ -334,6 +337,9 @@ def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 			module = imp.load_source(name, script)
 			if hasattr(module, 'desc'):
 				desc = getattr(module, 'desc')
+				# Silently skip scripts that shouldn't be listed
+				if desc is None:
+					continue
 			if verbose:
 				desc += ' <%s>' % script
 			check_script(module)
