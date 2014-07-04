@@ -308,10 +308,11 @@ for method in accepted_methods:
 	setattr(RequestManager, method, make_method(method))
 
 
-def check_main(module):
-	assert hasattr(module, 'main'), 'no main() function found'
+# Do some basic sanity checks on the script to see if it can be run
+def check_script(script):
+	assert hasattr(script, 'main'), 'no main() function found'
 	from inspect import getargspec
-	(args, varargs, keywords, defaults) = getargspec(module.main)
+	(args, varargs, keywords, defaults) = getargspec(script.main)
 	if varargs is not None:
 		return True
 	nargs = len(args or []) - len(defaults or [])
@@ -335,7 +336,7 @@ def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 				desc = getattr(module, 'desc')
 			if verbose:
 				desc += ' <%s>' % script
-			check_main(module)
+			check_script(module)
 		except IOError as e:
 			name = '!' + name
 			desc = "<%s read error: %s>" % (script, e)
@@ -361,7 +362,7 @@ def load_script(args, config):
 			script_name = os.path.basename(script_file)[:-3]
 			try:
 				script = imp.load_source(script_name, script_file)
-				check_main(script)
+				check_script(script)
 				break
 			except IOError as e:
 				import errno
@@ -380,7 +381,7 @@ def load_script(args, config):
 		script_name = os.path.basename(args.script)[:-3]
 		try:
 			script = imp.load_source(script_name, args.script)
-			check_main(script)
+			check_script(script)
 		except Exception as e:
 			parser.error("can't run script `%s`: %s" %
 					(args.script, e))
