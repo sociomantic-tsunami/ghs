@@ -43,6 +43,7 @@ All the arguments after *script* will be passed to the script as is, so the
 meaning depends on the different scripts. Please see the `WRITING SCRIPTS`_
 section for more details on how to write scripts.
 
+
 OPTIONS
 =======
 
@@ -209,6 +210,27 @@ For example::
 
 Any option set in this file is overridden by the corresponding command line
 option.
+
+
+EXIT VALUES
+===========
+
+0
+  Success
+
+2
+  Incorrect command line arguments
+
+3
+  Configuration file error
+
+4
+  Error while loading the script (syntax error in the script, most likely)
+
+5
+  Script not found
+
+
 
 FILES
 =====

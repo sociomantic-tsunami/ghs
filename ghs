@@ -3,7 +3,6 @@
 
 import re
 import sys
-import imp
 import json
 import base64
 import urllib
@@ -11,6 +10,12 @@ import urllib2
 import os.path
 
 VERSION = "ghs devel"
+
+# Exit status codes
+EXIT_BAD_ARGS = 2
+EXIT_CONFIG_ERR = 3
+EXIT_SCRIPT_ERR = 4
+EXIT_SCRIPT_NOT_FOUND = 5
 
 # Default configuration
 default_config = dict(
@@ -66,41 +71,40 @@ config = Config()
 #
 
 
-def out(msg, *args):
-	print(msg % args)
-
 def dbg(msg, *args):
 	global config
 	if config.debug:
 		sys.stderr.write((msg + "\n") % args)
 
-def log(msg, *args):
-	sys.stderr.write((msg + "\n") % args)
+# Exit the program with an error message and a given status code.
+# Optional keyword arguments:
+# tb = Print traceback too (default False)
+# remove_tb = Remove the first N frames from the traceback
+#             (default is 2, only used if tb=True)
+def die(parser, status, fmt, *args, **kwargs):
+	sys.stderr.write(parser.prog + ': error: ' + (fmt % args) + '\n')
 
-def die(status, fmt, *args):
-	sys.stderr.write((fmt + "\n") % args)
+	if kwargs.get('tb', False):
+		sys.stderr.write("\n")
+		from traceback import print_exception
+		(exc_type, exc_value, exc_tb) = sys.exc_info()
+		for i in range(kwargs.get('remove_tb', 2)):
+			exc_tb = exc_tb.tb_next
+		sys.stderr.write("Traceback (most recent call last):\n")
+		print_exception(exc_type, exc_value, exc_tb)
+
 	sys.exit(status)
 
 
-# Print traceback
-def print_tb():
-	from traceback import print_exception
-	(exc_type, exc_value, exc_tb) = sys.exc_info()
-	print_exception(exc_type, exc_value, exc_tb.tb_next)
-
-
-# Import a Python file by file name
-def import_file(module_name, file_name):
-	dbg("Importing module %s from file %s...", module_name, file_name)
+# Load a Python file as a module using the file directory as part of the Python
+# path to resolve imports.
+def load_source(module_name, file_name):
+	import imp
+	sys.path.insert(0, os.path.dirname(file_name))
 	try:
-		module = imp.load_source(module_name, file_name)
-	except IOError as e:
-		die(2, "Error: can't read module %s in file '%s' (%s)",
-				module_name, file_name, e)
-	except Exception as e:
-		print_tb()
-		sys.exit(10)
-	return module
+		return imp.load_source(module_name, file_name)
+	finally:
+		sys.path.pop(0)
 
 
 # Read and parse configuration from a configuration file for a specific profile
@@ -123,18 +127,18 @@ def parse_config(parser, args):
 	ghrc = None
 	for config_file in args.config_files:
 		try:
-			ghrc = imp.load_source('ghrc', config_file)
+			ghrc = load_source('ghrc', config_file)
 		except IOError as e:
 			from errno import ENOENT
 			if config_required or e.errno != ENOENT:
-				parser.error("can't read configuration file "
-						"'%s' (%s)" % (config_file, e))
+				parser.die(EXIT_CONFIG_ERR, "can't read "
+					"configuration file '%s': %s",
+					config_file, e)
 			continue
 		except Exception as e:
-			print_tb()
-			parser.error("configuration file '%s' error: %s" %
-					(config_file, e))
-			continue
+			parser.die(EXIT_CONFIG_ERR, "can't load "
+				"configuration file '%s'", config_file,
+				tb=True)
 
 		# Update with the global values
 		for var in default_config.keys():
@@ -308,20 +312,26 @@ for method in accepted_methods:
 	setattr(RequestManager, method, make_method(method))
 
 
+class CheckFailed (Exception):
+	pass
+
 # Do some basic sanity checks on the script to see if it can be run
 def check_script(script):
 	# Silently skip scripts that shouldn't be listed
-	assert not hasattr(script, 'desc') or script.desc is not None, \
-			'is marked as a non-script (has desc=None)'
-	assert hasattr(script, 'main'), 'no main() function found'
+	if hasattr(script, 'desc') and script.desc is None:
+		raise CheckFailed('is marked as a non-script (has desc=None)')
+	if not hasattr(script, 'main'):
+		raise CheckFailed('no main() function found')
 	from inspect import getargspec
 	(args, varargs, keywords, defaults) = getargspec(script.main)
 	if varargs is not None:
 		return True
 	nargs = len(args or []) - len(defaults or [])
-	assert len(args or []) >= 3 and nargs <= 3, \
-			'main() should accept only 3 required arguments'
+	if len(args or []) < 3 or nargs > 3:
+		raise CheckFailed('main() should accept only 3 required '
+				'arguments')
 	return True
+
 
 def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 	from glob import glob
@@ -334,7 +344,7 @@ def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 		desc = '<no description>'
 
 		try:
-			module = imp.load_source(name, script)
+			module = load_source(name, script)
 			if hasattr(module, 'desc'):
 				desc = getattr(module, 'desc')
 				# Silently skip scripts that shouldn't be listed
@@ -360,43 +370,59 @@ def print_available_scripts(script_dirs, verbose=False, fo=sys.stdout):
 		fo.write(('  %- '+str(width)+'s\t%s\n') % (name, scripts[name]))
 
 
-def load_script(args, config):
+def load_script(parser, args, config):
+	def die(status, fmt, *args, **kwargs):
+		fmt += ' (script dirs: ' + ', '.join(config.script_dirs) + ')'
+		parser.die(status, fmt, *args, **kwargs)
+
 	if not args.script.endswith('.py'):
-		errors = dict()
 		for d in config.script_dirs:
 			script_file = d + '/' + args.script + '.py'
 			script_name = os.path.basename(script_file)[:-3]
 			try:
-				script = imp.load_source(script_name, script_file)
+				script = load_source(script_name, script_file)
 				check_script(script)
 				break
 			except IOError as e:
 				import errno
 				if e.errno != errno.ENOENT:
-					errors[script_file] = e
+					die(EXIT_SCRIPT_ERR, "can't load "
+						"script `%s` <%s>: %s",
+						script_name, script_file, e)
+			except CheckFailed as e:
+				die(EXIT_SCRIPT_ERR, "can't load script `%s` "
+					"<%s>: %s", script_name, script_file, e)
 			except Exception as e:
-				errors[script_file] = e
+				die(EXIT_SCRIPT_ERR, "can't load "
+					"script `%s` <%s> (script dirs: %s)",
+					script_name, script_file,
+					config.script_dirs,
+					tb=True)
 		else:
-			errors = '\n'.join(['%s: %s' % i for i in errors.items()])
-			if errors:
-				errors = ':\n' + errors
-			parser.error("can't find a valid script with the name "
-					"`%s` (script dirs: %s)%s" %
-					(args.script, config.script_dirs, errors))
+			die(EXIT_SCRIPT_NOT_FOUND, "can't find a script with "
+					"the name `%s`", args.script)
 	else:
 		script_name = os.path.basename(args.script)[:-3]
 		try:
-			script = imp.load_source(script_name, args.script)
+			script = load_source(script_name, args.script)
 			check_script(script)
+		except CheckFailed as e:
+			die(EXIT_SCRIPT_ERR, "can't load script <%s>: %s",
+					args.script, e)
 		except Exception as e:
-			parser.error("can't run script `%s`: %s" %
-					(args.script, e))
+			die(EXIT_SCRIPT_ERR, "can't load script <%s>",
+					args.script,
+					tb=True)
+
 	return script
 
 
 def create_argparser():
 	global default_config
 	import argparse
+	# Monkeypatch ArgumentParser to add the die() method
+	argparse.ArgumentParser.die = die
+
 	parser = argparse.ArgumentParser(description='GitHub scripts runner.',
 			add_help=False,
 			formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -490,15 +516,13 @@ def main():
 
 	if 'script' not in args:
 		print_help(parser, sys.stderr)
-		sys.stderr.write('\n%s: error: please specify a script\n' %
-				parser.prog)
-		sys.exit(2)
+		sys.stderr.write('\n')
+		parser.die(EXIT_BAD_ARGS, 'please specify a script')
 
 	rq = RequestManager(config.base_url, config.oauthtoken,
 			config.username, config.password)
 
-	script = load_script(args, config)
-	sys.path.insert(0, os.path.dirname(script.__file__))
+	script = load_script(parser, args, config)
 	script.main(rq, args.script_args, config)
 
 
