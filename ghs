@@ -458,15 +458,16 @@ def create_argparser():
 			help='directory where to search for scripts; can be '
 			'used multiple times, last option has priority over '
 			'the previous ones')
-	parser.add_argument('-l', '--list-scripts', action='store_true',
+	group = parser.add_mutually_exclusive_group()
+	group.add_argument('-l', '--list-scripts', action='store_true',
 			default=argparse.SUPPRESS,
 			help='list available scripts and exit')
-	parser.add_argument('-L', '--list-all-scripts', action='store_true',
+	group.add_argument('-L', '--list-all-scripts', action='store_true',
 			default=argparse.SUPPRESS,
 			help='list all scripts, including extra information '
 			'and broken scripts (prefixed with a "!" and a '
 			'description of why is broken) and exit')
-	parser.add_argument('script', nargs='?', default=argparse.SUPPRESS,
+	group.add_argument('script', nargs='?', default=argparse.SUPPRESS,
 			help='name of the script to call, if it ends in '
 			'".py" then it is considered a path to a file '
 			'instead of a script name to look for in the '
