@@ -112,7 +112,8 @@ looked up in them:
   `rq.get('/repos/github/markup')` will retrieve the information about the
   *markup* repository from the *github* organization. The retrieved data is
   parsed as JSON by the Python's `json.loads()` function, so you can map the
-  GitHub API directly as Python objects.
+  GitHub API directly as Python objects. You can find a reference to the
+  GitHub API here: https://developer.github.com/v3/
 
   All these methods also accept arbitrary keyword arguments, which are
   translated to keys in a json dictionary to send to GitHub. For example, to
