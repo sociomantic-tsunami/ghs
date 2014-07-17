@@ -130,6 +130,14 @@ looked up in them:
   CONFIGURATION_, plus `config.prog` which holds the program name, useful to
   pass to an eventual `argparse` for your script.
 
+  Example::
+
+    desc = "Print all the repositories from the github organization"
+
+    def main(rq, args, config):
+      for r in rq.get('/orgs/github/repos'):
+        print r['name']
+
 
 CONFIGURATION
 =============
