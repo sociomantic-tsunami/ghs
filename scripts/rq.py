@@ -34,18 +34,18 @@ def main(rq, args, config):
 	res = rq.json_req(path, verb, **opts)
 	print_obj(res)
 
-def print_dict(d, prefix=''):
+def print_dict(d, prefix=u''):
 	kwidth = max((len(k) for k in d))
 	for k, v in d.items():
-		print (prefix + '%- ' + str(kwidth) + 's %s') % (k, v)
+		print (prefix + u'%- ' + unicode(kwidth) + u's %s') % (k, v)
 
-def print_obj(obj, prefix=''):
+def print_obj(obj, prefix=u''):
 	if isinstance(obj, dict):
 		print_dict(obj, prefix)
 	elif isinstance(obj, list):
 		for i, d in enumerate(obj):
-			print prefix + 'Item', i
-			print_obj(d, prefix + '\t')
+			print prefix + u'Item', i
+			print_obj(d, prefix + u'\t')
 			print
 	elif obj:
 		print prefix + obj
