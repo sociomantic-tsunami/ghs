@@ -3,6 +3,7 @@
 
 # Default global options
 # debug = False
+# verbose = False
 # base_url = 'https://api.github.com'
 # script_dirs = ['~/.ghscripts']
 
@@ -30,6 +31,7 @@ profiles['default'] = profiles['user']
 # If you don't care about profiles, you can use a flat syntax, for example:
 # ---
 # debug = True
+# verbose = True
 # oauthtoken = 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
 # ---
 # And you can mix both (profiles['default'] will have precedence over the

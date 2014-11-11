@@ -61,8 +61,11 @@ OPTIONS
 \-p NAME, --profile NAME
   profile to use from the config file (default: default)
 
+\-v, --verbose
+  show verbose output (http requests URLs)
+
 \-d, --debug
-  show debug output (http requests, etc.)
+  show debug output (complete requests with headers and JSON bodies)
 
 \-b URL, --base-url URL
   base URL to use to make GitHub API requests (default: https://api.github.com)

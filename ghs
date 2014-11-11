@@ -22,12 +22,14 @@ default_config = dict(
 	base_url = "https://api.github.com",
 	script_dirs = ["~/.ghscripts"],
 	debug = False,
+	verbose = False,
 	oauthtoken = None,
 	username = None,
 	password = None,
 )
 class Config:
 	debug = default_config['debug']
+	verbose = default_config['verbose']
 	def __repr__(self):
 		values = ', '.join(['%s=%r' % (k, getattr(self, k))
 				for k in dir(self) if not k.startswith('__')])
@@ -49,6 +51,7 @@ config = Config()
 # 	username = "my-user-company2",
 # 	password="SUPER COMPANY 2 SECRET",
 # 	debug = True, # optional
+# 	verbose = True, # optional
 # )
 # profiles['default'] = profiles['me']
 # ---
@@ -62,6 +65,7 @@ config = Config()
 # ---
 # base_url = 'https://api.github.com' # optional
 # debug = True # optional
+# verbose = True # optional
 # username = "YOURNAME-YOURLASTNAME-sociomantic"
 # password = "YOUR SUPER SECRET PASSWORD"
 # # or oauthtoken = 'some super long token given by github'
@@ -69,6 +73,12 @@ config = Config()
 # And you can mix both (profiles['default'] will have precedence over the
 # global defaults.
 #
+
+
+def verbose(msg, *args):
+	global config
+	if config.verbose:
+		sys.stdout.write((msg + "\n") % args)
 
 
 def dbg(msg, *args):
@@ -274,6 +284,7 @@ class RequestManager:
 	# one can be specified at a time and they are serialized as json (args
 	# as a json list and kwargs as a json dictionary/object).
 	def json_req(self, url, method, *args, **kwargs):
+		verbose("%s %s", method, url)
 		if not url.startswith('http'):
 			url = self.base_url + url
 		if method.lower() in ('post', 'patch', 'put'):
@@ -436,9 +447,13 @@ def create_argparser():
 	parser.add_argument('-p', '--profile', metavar='NAME',
 			default='default',
 			help='profile to use from the config file')
+	parser.add_argument('-v', '--verbose', action='store_true',
+			default=argparse.SUPPRESS,
+			help='show verbose output (http requests URLs)')
 	parser.add_argument('-d', '--debug', action='store_true',
 			default=argparse.SUPPRESS,
-			help='show debug output (http requests, etc.)')
+			help='show debug output (complete requests with '
+			'headers and JSON bodies)')
 	parser.add_argument('-b', '--base-url', metavar='URL',
 			default=argparse.SUPPRESS,
 			help='base URL to use to make GitHub API requests '
