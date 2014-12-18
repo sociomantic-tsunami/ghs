@@ -191,7 +191,67 @@ def parse_config(parser, args):
 	return config
 
 
+# A GitHub HTTP Error
+#
+# This is a HTTPError for which the body is parsed as json. If we find some
+# common attributes used in GitHub errors, we assume it is one. For this the
+# class method getFrom() should be used, which returns a GitHub error if the
+# provided HTTPError looks like one, or None if it looks like a regular
+# HTTPError.
+#
+# The GitHubError also provide the attributes:
+# * message
+# * documentation_url
+# * errors
+# That should be present in every GitHub error.
+#
+# Please take a look at:
+# https://developer.github.com/v3/#client-errors
+# for more details.
+class GitHubError (urllib2.HTTPError):
+
+	@classmethod
+	def getFrom(cls, http_error):
+		try:
+			body = http_error.read()
+			obj = json.loads(body)
+			msg = obj['message']
+			doc = obj['documentation_url']
+			err = obj['errors']
+		except Exception as e:
+			global config
+			# Not a JSON object with a "message" field
+			dbg("Not a valid GitHub error: %s (%s)",
+					e.__class__.__name__, e)
+			return None
+
+		return GitHubError(http_error, msg, doc, err)
+
+	def __init__(self, http_error, message, documentation_url, errors):
+		self.message = message
+		self.documentation_url = documentation_url
+		self.errors = errors
+		e = http_error
+		super(GitHubError, self).__init__(e.url,
+			e.code, self.build_message(), e.hdrs, e.fp)
+
+	def build_message(self):
+		msg = self.message
+		if self.errors:
+			msg += ". Errors:\n"
+			for e in self.errors:
+				if e['code'] == 'custom':
+					m = "{message}"
+				elif e['code'] == 'missing':
+					m = "missing"
+				else:
+					m = "{field} {code}"
+				msg += ("* {resource}: " + m + "\n").format(**e)
+		return msg + "\nDocumentation: " + self.documentation_url
+
+
 accepted_methods = ('options', 'head', 'get', 'post', 'patch', 'put', 'delete')
+
 
 # Manages GitHub request handling authentication and content headers.
 #
@@ -215,6 +275,9 @@ accepted_methods = ('options', 'head', 'get', 'post', 'patch', 'put', 'delete')
 #
 # See http://developer.github.com/ for more details on the GitHub API
 class RequestManager:
+
+	# Shortcut to access GitHubErrors from the request object
+	GitHubError = GitHubError
 
 	basic_auth = None
 	oauthtoken = None
@@ -256,7 +319,10 @@ class RequestManager:
 				else:
 					dbg('%s: %s', *h)
 		dbg('%s', req.get_data())
-		return urllib2.urlopen(req)
+		try:
+			return urllib2.urlopen(req)
+		except urllib2.HTTPError as e:
+			raise GitHubError.getFrom(e) or e
 
 	# Serialize args OR kwargs (they are mutually exclusive) as json.
 	def dump(self, *args, **kwargs):

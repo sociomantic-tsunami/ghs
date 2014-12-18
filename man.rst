@@ -125,6 +125,13 @@ looked up in them:
   If arbitrary positional arguments are passed instead, then the contents are
   sent to GitHub as a json list of the items instead of a dictionary.
 
+  The `rq` object also provides access to the especial exception
+  `GitHubError`, which is thrown when GitHub reports an error throgh a JSON
+  object in the response. You can catch this type of exception and report
+  better error messages in your scripts. If you need more details about the
+  error you can use its attributes: `message`, `documentation_url` and
+  `errors`.
+
   `args` is the raw command line arguments that follows the script in the
   command line call. You can use regular Python facilities to parse the
   arguments, like the `argparse` module.
