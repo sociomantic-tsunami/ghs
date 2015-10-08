@@ -282,6 +282,9 @@ class RequestManager:
 	basic_auth = None
 	oauthtoken = None
 	links_re = re.compile(r'<([^>]+)>;.*rel=[\'"]?([^"]+)[\'"]?', re.M)
+	# For advanced usage, you can try upcoming API changes by using:
+	# "application/vnd.github.ironman-preview+json" for example
+	accept = "application/json"
 
 	def __init__(self, base_url, oauthtoken=None,
 			username=None, password=None):
@@ -307,7 +310,7 @@ class RequestManager:
 			req.add_header("Authorization", "bearer " +
 					self.oauthtoken)
 		req.add_header("Content-Type", "application/json")
-		req.add_header("Accept", "application/json")
+		req.add_header("Accept", self.accept)
 		req.add_header("Content-Length", str(len(body) if body else 0))
 		req.get_method = lambda: method.upper()
 		dbg('%s', req.get_full_url())
