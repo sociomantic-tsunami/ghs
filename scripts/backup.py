@@ -7,6 +7,8 @@ try:
 	import ttystatus
 	status = ttystatus.TerminalStatus(period=0.1)
 except ImportError:
+        sys.stderr.write("Warning: python-ttystatus package not present, not "
+		"showing nice progress\n")
 	status = dict()
 
 desc = 'backup a GitHub repository API metadata (issues, comments, etc.)'
