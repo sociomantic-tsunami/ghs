@@ -1,5 +1,6 @@
 import sys
 import ast
+import json
 import urllib
 import argparse
 
@@ -16,6 +17,18 @@ def main(rq, args, config):
 	if __name__ not in VERBS:
 		parser.add_argument('verb', choices=VERBS,
 			help='HTTP verb to use to send the query')
+	parser.add_argument('--format', '-f',
+		help='format to use to print each result for a response. '
+		'Any field can be used from the response, json responses are '
+		'converted to Python lists/dictionaries and the standard '
+		'Python format() function is used for formatting. If the '
+		'response is a list, then the format string is applied the '
+		'elements and the first argument ({0}) is the list index, and '
+		'the object attributes are passed as key=value items, so you '
+		'can reference them as {key} (same for one-object responses). '
+		'For more details see: '
+		'https://docs.python.org/3/library/string.html#formatstrings. '
+		'By default the complete json response is printed')
 	parser.add_argument('path', nargs='+',
 		help='path components of the URL to access. If a path '
 		'component contains a "=", then is interpreted as a variable '
@@ -32,23 +45,14 @@ def main(rq, args, config):
 	path, opts = parse_args(args.path)
 	verb = __name__ if __name__ in VERBS else args.verb
 	res = rq.json_req(path, verb, **opts)
-	print_obj(res)
-
-def print_dict(d, prefix=u''):
-	kwidth = max((len(k) for k in d))
-	for k, v in d.items():
-		print (prefix + u'%- ' + unicode(kwidth) + u's %s') % (k, v)
-
-def print_obj(obj, prefix=u''):
-	if isinstance(obj, dict):
-		print_dict(obj, prefix)
-	elif isinstance(obj, list):
-		for i, d in enumerate(obj):
-			print prefix + u'Item', i
-			print_obj(d, prefix + u'\t')
-			print
-	elif obj:
-		print prefix + obj
+	if args.format is None:
+		print(json.dumps(res, indent=4))
+	else:
+		if isinstance(res, list):
+			for k, v in enumerate(res):
+				print(args.format.format(k, **v))
+		else:
+			print(args.format.format(**res))
 
 def parse_args(args):
 	path = ''
