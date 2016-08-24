@@ -61,7 +61,7 @@ def parse_args(args):
 	for arg in args:
 		if '=' in arg:
 			key, val = arg.split('=', 1)
-			if val[0].isalpha():
+			if len(val) == 0 or val[0].isalpha():
 				opts[key] = val
 			else:
 				opts[key] = ast.literal_eval(val)
