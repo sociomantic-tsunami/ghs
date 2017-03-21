@@ -35,12 +35,13 @@ def main(rq, args, config):
 		'with the format <key>=<val> which, depending on the verb '
 		'used, will be sent as a query string parameter or as json in '
 		'the body of the request. If <val> starts with a letter, it '
-		'will be interpreted as a string, otherwise it is interpreted '
-		'as a python literal. Normal path components will be joined '
-		'using a "/" separator and properly escaped, so if you write '
-		'"some/path", it will be escaped as "some%%2Fpath", you need '
-		'to always provide path components separated by spaces '
-		'(as different arguments)')
+		'will be interpreted as a string (except for true/false, case '
+		'insensitive), otherwise it is interpreted as a python '
+		'literal. Normal path components will be joined using a "/" '
+		'separator and properly escaped, so if you write "some/path", '
+		'it will be escaped as "some%%2Fpath", you need to always '
+		'provide path components separated by spaces (as different '
+		'arguments)')
 	args = parser.parse_args(args)
 	path, opts = parse_args(args.path)
 	verb = __name__ if __name__ in VERBS else args.verb
@@ -61,7 +62,10 @@ def parse_args(args):
 	for arg in args:
 		if '=' in arg:
 			key, val = arg.split('=', 1)
-			if len(val) == 0 or val[0].isalpha():
+			if val.lower() in ('true', 'false'):
+				opts[key] = True if val.lower() == 'true' \
+						else False
+			elif len(val) == 0 or val[0].isalpha():
 				opts[key] = val
 			else:
 				opts[key] = ast.literal_eval(val)
