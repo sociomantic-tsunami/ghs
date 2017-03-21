@@ -523,6 +523,10 @@ def create_argparser():
 			default=argparse.SUPPRESS,
 			help='show debug output (complete requests with '
 			'headers and JSON bodies)')
+	parser.add_argument('-a', '--accept', metavar='MEDIATYPE',
+			default=RequestManager.accept,
+			help='media type to accept (useful to use GitHub API '
+			'previews)')
 	parser.add_argument('-b', '--base-url', metavar='URL',
 			default=argparse.SUPPRESS,
 			help='base URL to use to make GitHub API requests '
@@ -606,6 +610,7 @@ def main():
 
 	rq = RequestManager(config.base_url, config.oauthtoken,
 			config.username, config.password)
+	rq.accept = args.accept
 
 	script = load_script(parser, args, config)
 	script.main(rq, args.script_args, config)
