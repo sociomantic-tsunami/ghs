@@ -528,7 +528,7 @@ def create_argparser():
 			help='base URL to use to make GitHub API requests '
 			'(default: %(base_url)s)' % default_config)
 	parser.add_argument('-o', '--oauth-token', metavar='TOKEN',
-			default=argparse.SUPPRESS,
+			default=argparse.SUPPRESS, dest='oauthtoken',
 			help='GitHub OAuth token to use to authenticate')
 	parser.add_argument('-u', '--username', metavar='USER',
 			default=argparse.SUPPRESS,
