@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import argparse
@@ -37,6 +38,7 @@ def main(rq, args, config):
 
 	backup = Backup(rq, args)
 
+	success = False
 	try:
 		status.format('%ElapsedTime() [Orgs(%Integer(odone)/%Integer(ototal))/'
 				'Users(%Integer(udone)/%Integer(utotal))/'
@@ -76,9 +78,12 @@ def main(rq, args, config):
 			backup.backup_repo(repo)
 			status['done'] += 1
 			status['rdone'] += 1
+		success = True
 	finally:
-		backup.zipfile.close()
 		status.finish()
+		backup.newzipfile.close()
+		if success:
+			os.rename(backup.newzipfname, backup.zipfname)
 
 
 def parse_repos(rq, stuff, recursive):
@@ -132,7 +137,8 @@ class Backup:
 		self.args = args
 		self.path = None
 		self.zipfname = self.args.file_name
-		self.zipfile = ZipFile(self.zipfname, 'w')
+		self.newzipfname = self.zipfname + '.new'
+		self.newzipfile = ZipFile(self.newzipfname, 'w')
 
 	def backup_org(self, org):
 		self.path = org
@@ -164,8 +170,7 @@ class Backup:
 					write_url(col['cards_url'])
 		except HTTPError as e:
 			if e.getcode() == 410:
-				status.notify('{}: Skipped disabled {}',
-						self.zipfname, path)
+				status.notify('Skipped disabled {}', path)
 			else:
 				raise e
 
@@ -239,8 +244,8 @@ class Backup:
 
 	def write(self, path, obj):
 		path = self.path + '/' + (path + '.json').encode('utf-8')
-		status.notify('{}: Adding {}', self.zipfname, path)
-		self.zipfile.writestr(path, json.dumps(obj, indent=2))
+		status.notify('Adding {}', path)
+		self.newzipfile.writestr(path, json.dumps(obj, indent=2))
 
 class Status(status_base):
 	def __init__(self, quiet):
