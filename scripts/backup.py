@@ -5,71 +5,124 @@ from zipfile import ZipFile
 from urllib2 import HTTPError
 try:
 	import ttystatus
-	status = ttystatus.TerminalStatus(period=0.1)
+	status_base = ttystatus.TerminalStatus
 except ImportError:
         sys.stderr.write("Warning: python-ttystatus package not present, not "
 		"showing nice progress\n")
-	status = dict()
+	status_base = dict
 
 desc = 'backup a GitHub repository API metadata (issues, comments, etc.)'
 
-verbose = False
 
 def main(rq, args, config):
 	prog = config.prog + ' ' + __name__
 	parser = argparse.ArgumentParser(prog=prog, description=desc)
 	parser.add_argument('what', nargs='+',
-		help="username or repository to backup (if the name contains "
-		"a '/' is interpreted as a repository, if it doesn't, as a "
-		"username/organization")
-	parser.add_argument('-f', '--file-name',
+		help="organization, user or repository to backup (if the name "
+		"contains a '/' is interpreted as a repository, if it doesn't, "
+		"as a user or organization")
+	parser.add_argument('-f', '--file-name', default='backup.zip',
 		help="ZIP filename where to write the backup to (if not "
-		"specified, a ZIP file is created per repository")
-	parser.add_argument('-v', '--verbose', action='store_true',
-		help="Print extra progress information")
+		"specified, a ZIP file is created per org / user / repository")
+	parser.add_argument('-r', '--recursive', action='store_true',
+		help="backup all the repositories for a user/organization")
+	parser.add_argument('-q', '--quiet', action='store_true',
+		help="don't print progress information")
 	args = parser.parse_args(args)
 
-	repos = parse_repos(rq, args.what)
+	global status
+	status = Status(args.quiet)
 
-	if args.verbose:
-		global verbose
-		verbose = True
+	orgs, users, repos = parse_repos(rq, args.what, args.recursive)
 
 	backup = Backup(rq, args)
 
-	status_repos(repos)
-	for repo in repos:
-		status['repo'] = repo
-		backup.backup(repo)
-		status['repos_done'] += 1
-	status_finish()
+	try:
+		status.format('%ElapsedTime() [Orgs(%Integer(odone)/%Integer(ototal))/'
+				'Users(%Integer(udone)/%Integer(utotal))/'
+				'Repos(%Integer(rdone)/%Integer(rtotal)) | '
+				'Curr: %Pathname(curr)%Pathname(path) '
+				'[%Integer(done)/%Integer(total), '
+				'%PercentDone(done,total), '
+				'ETA %RemainingTime(done,total)]')
+		status['curr'] = '?'
+		status['path'] = '/'
+		status['total'] = len(orgs)+len(users)+len(repos)
+		status['done'] = 0
+		status['ototal'] = len(orgs)
+		status['odone'] = 0
+		status['utotal'] = len(users)
+		status['udone'] = 0
+		status['rtotal'] = len(repos)
+		status['rdone'] = 0
+
+		for org in orgs:
+			status['curr'] = org
+			status.flush()
+			backup.backup_org(org)
+			status['done'] += 1
+			status['odone'] += 1
+
+		for user in users:
+			status['curr'] = user
+			status.flush()
+			backup.backup_user(user)
+			status['done'] += 1
+			status['udone'] += 1
+
+		for repo in repos:
+			status['curr'] = repo
+			status.flush()
+			backup.backup_repo(repo)
+			status['done'] += 1
+			status['rdone'] += 1
+	finally:
+		backup.zipfile.close()
+		status.finish()
 
 
-def parse_repos(rq, stuff):
-	usernames = []
-	repos = []
+def parse_repos(rq, stuff, recursive):
+	orgs = set()
+	users = set()
+	repos = set()
 	for s in stuff:
 		if '/' in s:
-			repos.append(s)
+			repos.add(s)
 		else:
-			usernames.append(s)
-	if not usernames:
-		return repos
+			users.add(s)
+	if not users:
+		return [], [], sorted(repos)
 
-	status_usernames(usernames)
-	for u in usernames:
-		status['username'] = u
+	status.format('%ElapsedTime() Inspecting users/orgs: %Pathname(owner) '
+			'[%Integer(done)/%Integer(total), '
+			'%PercentDone(done,total), '
+			'ETA %RemainingTime(done,total)]')
+	status['owner'] = '?'
+	status['total'] = len(users)
+	status['done'] = 0
+
+	for u in sorted(users):
+		status['owner'] = u
+		status.flush()
 		try:
 			rq.get('/orgs/' + u)
 			url = '/orgs/%s/repos' % u
+			type = 'sources'
+			users.remove(u)
+			orgs.add(u)
 		except HTTPError as e:
 			if e.getcode() != 404:
 				raise e
 			url = '/users/%s/repos' % u
-		repos.extend(r['full_name'] for r in rq.get(url))
-		status['usernames_done'] += 1
+			type = 'owner'
+		if recursive:
+			rr = rq.get(url, type=type)
+			repos.update(r['full_name'] for r in rr)
+		status['done'] += 1
 
-	return repos
+	status.clear()
+
+	return sorted(orgs), sorted(users), sorted(repos)
 
 
 class Backup:
@@ -77,144 +130,151 @@ class Backup:
 	def __init__(self, rq, args):
 		self.rq = rq
 		self.args = args
-		self.zipfile = None
-		self.zipfname = None
-		self.repo = None
 		self.path = None
-
-	def backup(self, repo):
-		self.repo = repo
-		self.path = repo
 		self.zipfname = self.args.file_name
-		if not self.zipfname:
-			self.zipfname = self.path.replace('/', '_')  + '.zip'
 		self.zipfile = ZipFile(self.zipfname, 'w')
 
-		with self.zipfile:
-			self.write_url('labels')
-			self.write_url('milestones')
-			self.write_url('comments')
-			self.write_url('keys')
-			self.write_url('hooks')
-			self.write_url('releases')
-			issues = self.rq.get('/repos/%s/issues' % repo,
-				state='all', sort='created', direction='asc')
-			status_reset_issues(issues)
-			for issue in issues:
-				status['issue'] = issue['number']
-				self.backup_issue(issue)
-				status['issues_done'] += 1
-			status_reset_issues()
+	def backup_org(self, org):
+		self.path = org
+		path = '/orgs/' + org
+		self.write_url(path)
+		path += '/'
+		self.write_url(path + 'members')
+		self.write_url(path + 'invitations')
+		self.write_url(path + 'outside_collaborators')
+		self.write_url(path + 'hooks')
+		self.write_url(path + 'blocks',
+				'application/vnd.github.giant-sentry-fist-preview+json')
+		self.backup_projects(path + 'projects')
+		self.backup_teams(path + 'teams')
 
-	def backup_issue(self, issue):
-		self.write_issue_attr(issue, 'issue', 'url')
-		self.write_issue_attr(issue, 'comments')
-		self.write_issue_attr(issue, 'events')
-		if 'pull_request' in issue:
-			url = '/repos/%s/pulls/%s' % (self.repo, issue['number'])
-			pr = self.rq.get(url)
-			self.write_issue_attr(pr, 'review_comments')
-			self.write_issue_attr(pr, 'commits')
-			self.write_issue_attr(pr, 'statuses')
+	def backup_user(self, user):
+		self.path = user
+		path = '/users/' + user
+		self.write_url(path)
 
-	def write_issue_attr(self, issue, name, url_key=None):
-		path = 'issues/%s/%s' % (issue['number'], name)
-		if url_key is None:
-			url_key = name + '_url'
-		self.write_url(path, issue[url_key])
-
-	def write_url(self, name, url=None):
-		if url is None:
-			url = '/repos/%s/%s' % (self.repo, name)
+	def backup_projects(self, path):
+		write_url = lambda path: self.write_url(path,
+			'application/vnd.github.inertia-preview+json')
 		try:
-			obj = self.rq.get(url)
-			if obj:
-				self.write(name, obj)
+			for proj in write_url(path, state='all'):
+				write_url(proj['url'])
+				columns = write_url(proj['columns_url'])
+				for col in columns:
+					write_url(col['cards_url'])
 		except HTTPError as e:
-			if e.getcode() != 404:
+			if e.getcode() == 410:
+				status.notify('{}: Skipped disabled {}',
+						self.zipfname, path)
+			else:
 				raise e
 
-	def write(self, name, obj):
-		path = self.path + '/' + (name + '.json').encode('utf-8')
+	def backup_teams(self, path):
+		write_url = lambda path: self.write_url(path,
+			'application/vnd.github.hellcat-preview+json')
+		for team in write_url(path):
+			write_url(team['url'])
+			write_url(team['members_url'])
+			write_url(team['repositories_url'])
+
+	def backup_repo(self, repo):
+		self.path = repo
+		path = '/repos/' + repo
+		self.write_url(path)
+		path += '/'
+		self.write_url(path + 'labels')
+		self.write_url(path + 'milestones')
+		self.write_url(path + 'comments')
+		self.write_url(path + 'keys')
+		self.write_url(path + 'deployments')
+		self.write_url(path + 'hooks')
+		self.write_url(path + 'releases')
+		self.write_url(path + 'invitations')
+		self.write_url(path + 'collaborators',
+			'application/vnd.github.hellcat-preview+json')
+		self.backup_projects(path + 'projects')
+		self.backup_issues(path + 'issues')
+
+	def backup_issues(self, path):
+		write_url = lambda path: self.write_url(path,
+			'application/vnd.github.squirrel-girl-preview')
+		for issue in write_url(path, state='all', sort='created',
+				direction='asc'):
+			write_url(issue['url'])
+			write_url(issue['comments_url'])
+			write_url(issue['events_url'])
+			if 'pull_request' not in issue:
+				continue
+			pr = write_url(issue['pull_request']['url'])
+			write_url(pr['review_comments_url'])
+			write_url(pr['commits_url'])
+			write_url(pr['statuses_url'])
+			self.write_url(issue['pull_request']['url'] +
+				'/requested_reviewers',
+				'application/vnd.github.thor-preview+json')
+			reviews = write_url(issue['pull_request']['url'] +
+					'/reviews')
+			for review in reviews:
+				rev_path = '{}/reviews/{}'.format(
+						issue['pull_request']['url'],
+						review['id'])
+				write_url(rev_path)
+				write_url(rev_path + '/comments')
+
+	def write_url(self, path, accept=None):
+		old_accept = self.rq.accept
+		self.rq.accept = accept or old_accept
+		import re
+		path = re.sub(r'\{.+\}$', '', path)
+		url = path
+		if path.startswith(self.rq.base_url):
+			path = path[len(self.rq.base_url):]
 		status['path'] = path
-		status_notify('{}: Adding {}', self.zipfname, path)
+		try:
+			obj = self.rq.get(url)
+			self.write(path.lstrip('/'), obj)
+		finally:
+			self.rq.accept = old_accept
+		return obj
+
+	def write(self, path, obj):
+		path = self.path + '/' + (path + '.json').encode('utf-8')
+		status.notify('{}: Adding {}', self.zipfname, path)
 		self.zipfile.writestr(path, json.dumps(obj, indent=2))
 
+class Status(status_base):
+	def __init__(self, quiet):
+		self.is_dict = status_base is dict
+		self.super = super(Status, self)
+		if self.is_dict:
+			self.super.__init__()
+		else:
+			self.super.__init__(period=0.1)
+		self.quiet = quiet
 
-def status_notify(fmt, *args):
-	if not verbose:
-		return
+	def format(self, fmt):
+		if self.is_dict or self.quiet:
+			return
+		self.super.format(fmt)
 
-	msg = fmt.format(*args)
-	if isinstance(status, dict):
-		sys.stdout.write(msg + '\n')
-	else:
-		status.notify(msg)
+	def notify(self, fmt, *args):
+		if self.quiet:
+			return
+		msg = fmt.format(*args)
+		if self.is_dict:
+			sys.stdout.write(msg + '\n')
+		else:
+			self.super.notify(msg)
 
-def status_reset(repos=(), usernames=()):
-	status['username'] = usernames[0] if usernames else '?'
-	status['usernames'] = usernames
-	status['usernames_done'] = 0
-	status['usernames_total'] = len(usernames)
+	def flush(self):
+		if self.is_dict:
+			sys.stdout.flush()
+		else:
+			self.super.flush()
 
-	status['repo'] = repos[0] if repos else '?'
-	status['repos'] = repos
-	status['repos_done'] = 0
-	status['repos_total'] = len(repos)
-
-	status_reset_issues()
-
-def status_reset_issues(issues=()):
-	status['issue'] = 0
-	status['issues'] = [i['number'] for i in issues]
-	status['issues_done'] = 0
-	status['issues_total'] = len(issues)
-	status['issue_part'] = ''
-
-def status_repos(repos):
-	if not isinstance(status, dict):
-		status.clear()
-	status_reset(repos)
-	if isinstance(status, dict):
-		return
-	status.add(ttystatus.ElapsedTime())
-	status.add(ttystatus.Literal(' Repo: '))
-	status.add(ttystatus.Pathname('repo'))
-	status.add(ttystatus.Literal(' ['))
-	status.add(ttystatus.Index('repo', 'repos'))
-	status.add(ttystatus.Literal(', '))
-	status.add(ttystatus.PercentDone('repos_done', 'repos_total'))
-	status.add(ttystatus.Literal(' done]'))
-	status.add(ttystatus.Literal(' | Issue #'))
-	status.add(ttystatus.String('issue'))
-	status.add(ttystatus.Literal(' ('))
-	status.add(ttystatus.Index('issue', 'issues'))
-	status.add(ttystatus.Literal(', '))
-	status.add(ttystatus.PercentDone('issues_done', 'issues_total'))
-	status.add(ttystatus.Literal(' done, ETA '))
-	status.add(ttystatus.RemainingTime('issues_done', 'issues_total'))
-	status.add(ttystatus.Literal('): '))
-	status.add(ttystatus.Pathname('path'))
-
-def status_usernames(usernames):
-	if not isinstance(status, dict):
-		status.clear()
-	status_reset([], usernames)
-	if isinstance(status, dict):
-		return
-	status.add(ttystatus.ElapsedTime())
-	status.add(ttystatus.Literal(' Username: '))
-	status.add(ttystatus.Pathname('username'))
-	status.add(ttystatus.Literal(' ['))
-	status.add(ttystatus.Index('username', 'usernames'))
-	status.add(ttystatus.Literal(', '))
-	status.add(ttystatus.PercentDone('usernames_done', 'usernames_total'))
-	status.add(ttystatus.Literal(' done, ETA '))
-	status.add(ttystatus.RemainingTime('usernames_done', 'usernames_total'))
-	status.add(ttystatus.Literal(']'))
-
-def status_finish():
-	if isinstance(status, dict):
-		return
-	status.finish()
+	def finish(self):
+		if self.is_dict:
+			sys.stdout.flush()
+		else:
+			self.super.finish()
 
