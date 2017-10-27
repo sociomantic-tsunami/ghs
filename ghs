@@ -212,22 +212,19 @@ class GitHubError (urllib2.HTTPError):
 
 	@classmethod
 	def getFrom(cls, http_error):
+		body = http_error.read()
 		try:
-			body = http_error.read()
 			obj = json.loads(body)
 			msg = obj['message']
 			doc = obj['documentation_url']
-			err = obj['errors']
 		except Exception as e:
-			global config
-			# Not a JSON object with a "message" field
-			dbg("Not a valid GitHub error: %s (%s)",
-					e.__class__.__name__, e)
-			return None
+			dbg("Not a valid GitHub error: %s (%s: %s)",
+					body, e.__class__.__name__, e)
+			return GitHubError(http_error, body)
+		return GitHubError(http_error, msg, doc, obj.get('error'))
 
-		return GitHubError(http_error, msg, doc, err)
-
-	def __init__(self, http_error, message, documentation_url, errors):
+	def __init__(self, http_error, message=None, documentation_url=None,
+		errors=None):
 		self.message = message
 		self.documentation_url = documentation_url
 		self.errors = errors
@@ -236,7 +233,7 @@ class GitHubError (urllib2.HTTPError):
 			e.code, self.build_message(), e.hdrs, e.fp)
 
 	def build_message(self):
-		msg = self.message
+		msg = self.message or "Unknown error"
 		if self.errors:
 			msg += ". Errors:\n"
 			for e in self.errors:
@@ -247,7 +244,9 @@ class GitHubError (urllib2.HTTPError):
 				else:
 					m = "{field} {code}"
 				msg += ("* {resource}: " + m + "\n").format(**e)
-		return msg + "\nDocumentation: " + self.documentation_url
+		if self.documentation_url:
+			msg += "\nDocumentation: " + self.documentation_url
+		return msg
 
 
 accepted_methods = ('options', 'head', 'get', 'post', 'patch', 'put', 'delete')
