@@ -284,6 +284,9 @@ class RequestManager:
 	# For advanced usage, you can try upcoming API changes by using:
 	# "application/vnd.github.ironman-preview+json" for example
 	accept = "application/json"
+	# This field can be used by advanced users to set extra headers to be
+	# sent in the next request
+	headers = []
 
 	def __init__(self, base_url, oauthtoken=None,
 			username=None, password=None):
@@ -311,6 +314,9 @@ class RequestManager:
 		req.add_header("Content-Type", "application/json")
 		req.add_header("Accept", self.accept)
 		req.add_header("Content-Length", str(len(body) if body else 0))
+		for header in self.headers:
+			req.add_header(*header)
+		self.headers = []
 		req.get_method = lambda: method.upper()
 		dbg('%s', req.get_full_url())
 		# Hide sensitive information from DEBUG output
