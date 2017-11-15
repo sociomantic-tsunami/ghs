@@ -357,7 +357,11 @@ class RequestManager:
 	# uppercase), and args/kwargs are data to be sent to the client. Only
 	# one can be specified at a time and they are serialized as json (args
 	# as a json list and kwargs as a json dictionary/object).
-	def json_req(self, url, method, *args, **kwargs):
+	# It returns a tuple with (res, data) where res is an array with all
+	# the responses (it might bee more than one if getting more than one
+	# page of data) and data is the combination of all responses bodies
+	# parsed as JSON.
+	def json_req_full(self, url, method, *args, **kwargs):
 		verbose("%s %s", method, url)
 		if not url.startswith('http'):
 			url = self.base_url + url
@@ -367,10 +371,12 @@ class RequestManager:
 			body = None
 			url += '?' + urllib.urlencode(kwargs)
 		data = None
+		responses = []
 		prev_data = []
 		while url:
 			dbg("Request: %s %s\n%s", method, url, body)
 			res = self.auth_urlopen(url, method, body)
+			responses.append(res)
 			data = res.read()
 			dbg("Response:\n%s", data)
 			if data:
@@ -383,18 +389,28 @@ class RequestManager:
 		if prev_data:
 			data = prev_data
 		dbg("Parsed data:\n%s", data)
+		return responses, data
+
+	# Simple alias for json_req_full that only returns the JSON body
+	def json_req(self, url, method, *args, **kwargs):
+		_, data = self.json_req_full(url, method, *args, **kwargs)
 		return data
 
-# Create RequestManager.head(), get(), ... methods
+# Create RequestManager.head(), get(), ..., head_full(), get_full(), ... methods
 # We need the make_method() function to make Python bind the method variable
 # (from the loop) early (in the loop) instead of when is called. Otherwise all
 # methods get bind with the last value of method ('delete') in this case, which
 # is not only what we want, is also very dangerous.
-def make_method(method):
-	return lambda self, url, *args, **kwargs: \
-		self.json_req(url, method, *args, **kwargs)
+def make_method(method, with_responses):
+	if with_responses:
+		return lambda self, url, *args, **kwargs: \
+			self.json_req_full(url, method, *args, **kwargs)
+	else:
+		return lambda self, url, *args, **kwargs: \
+			self.json_req(url, method, *args, **kwargs)
 for method in accepted_methods:
-	setattr(RequestManager, method, make_method(method))
+	setattr(RequestManager, method, make_method(method, False))
+	setattr(RequestManager, method+'_full', make_method(method, True))
 
 
 class CheckFailed (Exception):
