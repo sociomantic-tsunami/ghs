@@ -27,12 +27,17 @@ def main(rq, args, config):
 		"specified, a ZIP file is created per org / user / repository")
 	parser.add_argument('-r', '--recursive', action='store_true',
 		help="backup all the repositories for a user/organization")
-	parser.add_argument('-q', '--quiet', action='store_true',
+	parser.add_argument('-v', '--verbose', action='count', default=1,
+		help="print more progress information")
+	parser.add_argument('-q', '--quiet', action='count', default=0,
 		help="don't print progress information")
 	args = parser.parse_args(args)
 
+	global verbose
+	verbose = args.verbose - args.quiet
+
 	global status
-	status = Status(args.quiet)
+	status = Status()
 
 	orgs, users, repos = parse_repos(rq, args.what, args.recursive)
 
@@ -170,7 +175,8 @@ class Backup:
 					write_url(col['cards_url'])
 		except HTTPError as e:
 			if e.getcode() == 410:
-				status.notify('Skipped disabled {}', path)
+				status.verbose('Skipped disabled {}',
+						self.zippath(path))
 			else:
 				raise e
 
@@ -244,26 +250,47 @@ class Backup:
 
 	def write(self, path, obj):
 		path = self.path + '/' + (path + '.json').encode('utf-8')
-		status.notify('Adding {}', path)
+		status.info('Adding {}', path)
 		self.newzipfile.writestr(path, json.dumps(obj, indent=2))
 
 class Status(status_base):
-	def __init__(self, quiet):
+	def __init__(self):
 		self.is_dict = status_base is dict
 		self.super = super(Status, self)
 		if self.is_dict:
 			self.super.__init__()
 		else:
 			self.super.__init__(period=0.1)
-		self.quiet = quiet
 
 	def format(self, fmt):
-		if self.is_dict or self.quiet:
+		global verbose
+		if self.is_dict or verbose == 0:
 			return
 		self.super.format(fmt)
 
-	def notify(self, fmt, *args):
-		if self.quiet:
+	def warn(self, fmt, *args):
+		global verbose
+		if verbose < 0:
+			return
+		msg = 'Warning: ' + fmt.format(*args)
+		if self.is_dict:
+			sys.stderr.write(msg + '\n')
+		else:
+			self.super.notify(msg)
+
+	def info(self, fmt, *args):
+		global verbose
+		if verbose < 1:
+			return
+		msg = fmt.format(*args)
+		if self.is_dict:
+			sys.stdout.write(msg + '\n')
+		else:
+			self.super.notify(msg)
+
+	def verbose(self, fmt, *args):
+		global verbose
+		if verbose < 2:
 			return
 		msg = fmt.format(*args)
 		if self.is_dict:
