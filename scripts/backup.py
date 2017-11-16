@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import argparse
-from zipfile import ZipFile
+from zipfile import ZipFile, ZIP_DEFLATED
 from urllib2 import HTTPError
 try:
 	import ttystatus
@@ -143,7 +143,7 @@ class Backup:
 		self.path = None
 		self.zipfname = self.args.file_name
 		self.newzipfname = self.zipfname + '.new'
-		self.newzipfile = ZipFile(self.newzipfname, 'w')
+		self.newzipfile = ZipFile(self.newzipfname, 'w', ZIP_DEFLATED)
 
 	def backup_org(self, org):
 		self.path = org
