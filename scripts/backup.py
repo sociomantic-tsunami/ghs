@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import errno
 import argparse
 from zipfile import ZipFile, ZIP_DEFLATED
 from urllib2 import HTTPError
@@ -27,6 +28,9 @@ def main(rq, args, config):
 		"specified, a ZIP file is created per org / user / repository")
 	parser.add_argument('-r', '--recursive', action='store_true',
 		help="backup all the repositories for a user/organization")
+	parser.add_argument('-i', '--incremental', action='store_true',
+		help="adds files to the archive and only gets data that have"
+		"changed since")
 	parser.add_argument('-v', '--verbose', action='count', default=1,
 		help="print more progress information")
 	parser.add_argument('-q', '--quiet', action='count', default=0,
@@ -87,6 +91,8 @@ def main(rq, args, config):
 	finally:
 		status.finish()
 		backup.newzipfile.close()
+		if backup.zipfile is not None:
+			backup.zipfile.close()
 		if success:
 			os.rename(backup.newzipfname, backup.zipfname)
 
@@ -143,6 +149,13 @@ class Backup:
 		self.path = None
 		self.zipfname = self.args.file_name
 		self.newzipfname = self.zipfname + '.new'
+		if args.incremental:
+			try:
+				self.zipfile = ZipFile(self.zipfname, 'r')
+			except IOError as e:
+				if e.errno != errno.ENOENT:
+					raise e
+				self.zipfile = None
 		self.newzipfile = ZipFile(self.newzipfname, 'w', ZIP_DEFLATED)
 
 	def backup_org(self, org):
@@ -165,12 +178,15 @@ class Backup:
 		self.write_url(path)
 
 	def backup_projects(self, path):
-		write_url = lambda path: self.write_url(path,
-			'application/vnd.github.inertia-preview+json')
+		local = False
+		write_url = lambda path, **kwa: self.write_url(path,
+			'application/vnd.github.inertia-preview+json', local,
+			**kwa)
 		try:
-			for proj in write_url(path, state='all'):
+			projs, _ = write_url(path, state='all')
+			for proj in projs:
 				write_url(proj['url'])
-				columns = write_url(proj['columns_url'])
+				columns, local = write_url(proj['columns_url'])
 				for col in columns:
 					write_url(col['cards_url'])
 		except HTTPError as e:
@@ -181,10 +197,12 @@ class Backup:
 				raise e
 
 	def backup_teams(self, path):
+		local = False
 		write_url = lambda path: self.write_url(path,
-			'application/vnd.github.hellcat-preview+json')
-		for team in write_url(path):
-			write_url(team['url'])
+			'application/vnd.github.hellcat-preview+json', local)
+		teams, _ = write_url(path)
+		for team in teams:
+			team, local = write_url(team['url'])
 			write_url(team['members_url'])
 			write_url(team['repositories_url'])
 
@@ -207,32 +225,38 @@ class Backup:
 		self.backup_issues(path + 'issues')
 
 	def backup_issues(self, path):
-		write_url = lambda path: self.write_url(path,
-			'application/vnd.github.squirrel-girl-preview')
-		for issue in write_url(path, state='all', sort='created',
-				direction='asc'):
-			write_url(issue['url'])
+		local = False
+		write_url = lambda path, **kwa: self.write_url(path,
+			'application/vnd.github.squirrel-girl-preview', local,
+			**kwa)
+		issues, _ = write_url(path, state='all', sort='created',
+				direction='asc')
+		for issue in issues:
+			local = False
+			issue, local = write_url(issue['url'])
 			write_url(issue['comments_url'])
 			write_url(issue['events_url'])
 			if 'pull_request' not in issue:
 				continue
-			pr = write_url(issue['pull_request']['url'])
+			local = False
+			pr, local = write_url(issue['pull_request']['url'])
 			write_url(pr['review_comments_url'])
 			write_url(pr['commits_url'])
 			write_url(pr['statuses_url'])
 			self.write_url(issue['pull_request']['url'] +
 				'/requested_reviewers',
 				'application/vnd.github.thor-preview+json')
-			reviews = write_url(issue['pull_request']['url'] +
+			reviews, _ = write_url(issue['pull_request']['url'] +
 					'/reviews')
 			for review in reviews:
 				rev_path = '{}/reviews/{}'.format(
 						issue['pull_request']['url'],
 						review['id'])
-				write_url(rev_path)
+				local = False
+				review, local = write_url(rev_path)
 				write_url(rev_path + '/comments')
 
-	def write_url(self, path, accept=None):
+	def write_url(self, path, accept=None, local=False, **kwargs):
 		old_accept = self.rq.accept
 		self.rq.accept = accept or old_accept
 		import re
@@ -242,16 +266,84 @@ class Backup:
 			path = path[len(self.rq.base_url):]
 		status['path'] = path
 		try:
-			obj = self.rq.get(url)
-			self.write(path.lstrip('/'), obj)
+			path = path.lstrip('/')
+			obj = None
+			etag = None
+			if self.args.incremental:
+				etag, obj = self.read(path)
+			if obj is not None and local:
+				self.write(path, obj, etag)
+				status.verbose('Skipped unmodified {}',
+						self.zippath(path))
+				return obj, True
+			if etag:
+				self.rq.headers.append(('If-None-Match', etag))
+			for i in range(1, 4):
+				try:
+					responses, obj = self.rq.get_full(url,
+							**kwargs)
+				except HTTPError as e:
+					if e.getcode() != 304:
+						raise e
+					status.verbose("Skipped unmodified {}",
+							self.zippath(path))
+					self.write(path, obj, etag)
+					return obj, True
+				except IOError as e:
+					status.warn("Error querying {}: {}",
+							url, e)
+					status.warn("Retrying in {}s...", i)
+					continue
+				break
+			else:
+				sys.stderr.write("Too many retries, giving up!\n")
+				sys.exit(10)
+			# To make things simpler, we just save the ETag
+			# of the first response (TODO: see if it works
+			# in practice)
+			self.write(path, obj, responses[0].headers.get('ETag'))
+			if etag is None:
+				status.info('Added {}', self.zippath(path))
+			else:
+				status.info('Updated {}', self.zippath(path))
+			return obj, False
 		finally:
 			self.rq.accept = old_accept
-		return obj
 
-	def write(self, path, obj):
-		path = self.path + '/' + (path + '.json').encode('utf-8')
-		status.info('Adding {}', path)
-		self.newzipfile.writestr(path, json.dumps(obj, indent=2))
+	def read(self, path):
+		if self.zipfile is None:
+			return None, None
+		path = self.zippath(path)
+		try:
+			data = json.loads(self.zipfile.read(path))
+		except KeyError as e:
+			return None, None
+		return data['etag'], data['contents']
+
+	def write(self, path, contents, etag=None):
+		zip_path = self.zippath(path)
+		data = dict(etag=etag, contents=contents)
+		try:
+			old_data = json.loads(self.newzipfile.read(zip_path))
+		except KeyError as e:
+			old_data = None
+		if old_data is None:
+			self.newzipfile.writestr(zip_path,
+					json.dumps(data, indent=2))
+		else:
+			if data['etag'] != old_data['etag']:
+				status.warn('{} already exist with '
+					'a non-matching ETag (old: {}, '
+					'new: {}), new value will be '
+					'discarded',
+					path, old_data['etag'], data['etag'])
+			else:
+				status.verbose('Skipping {}, already exist',
+						path)
+
+	def zippath(self, path):
+		return self.path + '/' + (path + '.json').encode('utf-8')
+
 
 class Status(status_base):
 	def __init__(self):
