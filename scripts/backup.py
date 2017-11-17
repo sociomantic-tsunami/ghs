@@ -7,7 +7,10 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from urllib2 import HTTPError
 try:
 	import ttystatus
-	status_base = ttystatus.TerminalStatus
+	if sys.stdout.isatty():
+		status_base = ttystatus.TerminalStatus
+	else:
+		status_base = dict
 except ImportError:
         sys.stderr.write("Warning: python-ttystatus package not present, not "
 		"showing nice progress\n")
