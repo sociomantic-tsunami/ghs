@@ -1,8 +1,12 @@
+from __future__ import division
+
 import os
 import sys
+import time
 import json
 import errno
 import argparse
+import datetime
 from zipfile import ZipFile, ZIP_DEFLATED
 from urllib2 import HTTPError
 try:
@@ -124,7 +128,7 @@ def parse_repos(rq, stuff, recursive):
 		status['owner'] = u
 		status.flush()
 		try:
-			rq.get('/orgs/' + u)
+			checked_rq(rq.get, '/orgs/%s/repos' % u)
 			url = '/orgs/%s/repos' % u
 			type = 'sources'
 			users.remove(u)
@@ -135,7 +139,7 @@ def parse_repos(rq, stuff, recursive):
 			url = '/users/%s/repos' % u
 			type = 'owner'
 		if recursive:
-			rr = rq.get(url, type=type)
+			rr = checked_rq(rq.get, url, type=type)
 			repos.update(r['full_name'] for r in rr)
 		status['done'] += 1
 
@@ -152,13 +156,13 @@ class Backup:
 		self.path = None
 		self.zipfname = self.args.file_name
 		self.newzipfname = self.zipfname + '.new'
+		self.zipfile = None
 		if args.incremental:
 			try:
 				self.zipfile = ZipFile(self.zipfname, 'r')
 			except IOError as e:
 				if e.errno != errno.ENOENT:
 					raise e
-				self.zipfile = None
 		self.newzipfile = ZipFile(self.newzipfname, 'w', ZIP_DEFLATED)
 
 	def backup_org(self, org):
@@ -281,26 +285,13 @@ class Backup:
 				return obj, True
 			if etag:
 				self.rq.headers.append(('If-None-Match', etag))
-			for i in range(1, 4):
-				try:
-					responses, obj = self.rq.get_full(url,
-							**kwargs)
-				except HTTPError as e:
-					if e.getcode() != 304:
-						raise e
-					status.verbose("Skipped unmodified {}",
-							self.zippath(path))
-					self.write(path, obj, etag)
-					return obj, True
-				except IOError as e:
-					status.warn("Error querying {}: {}",
-							url, e)
-					status.warn("Retrying in {}s...", i)
-					continue
-				break
-			else:
-				sys.stderr.write("Too many retries, giving up!\n")
-				sys.exit(10)
+			r = checked_rq(self.rq.get_full, url, **kwargs)
+			if r is None: # ETag matched
+				status.verbose("Skipped unmodified {}",
+						self.zippath(path))
+				self.write(path, obj, etag)
+				return obj, True
+			responses, obj = r
 			# To make things simpler, we just save the ETag
 			# of the first response (TODO: see if it works
 			# in practice)
@@ -346,6 +337,68 @@ class Backup:
 
 	def zippath(self, path):
 		return self.path + '/' + (path + '.json').encode('utf-8')
+
+
+def checked_rq(rq_fn, url, **kwargs):
+	retries=10
+	for i in range(retries):
+		class fmtfloat(float):
+			def __format__(self, fmt):
+				if self > 1: fmt = '0'
+				if not fmt: fmt = '3'
+				return "{0:.{1}f}".format(float(self), fmt) \
+						.rstrip('0').rstrip('.')
+		# Exponential backoff (30ms - 16s) in case of errors
+		wait_secs = fmtfloat(2**i / 2**(retries/2))
+		try:
+			r = rq_fn(url, **kwargs)
+		except HTTPError as e:
+			# Errors that are not transient and should be handled
+			# by the caller
+			if e.getcode() in (404, 410):
+				raise e
+			elif e.getcode() == 403: # Ratelimit
+				remaining = int(e.headers.get(
+					'X-RateLimit-Remaining'))
+				if remaining != 0:
+					raise e
+				utc_ts = int(e.headers.get('X-RateLimit-Reset'))
+				reset = datetime.datetime(
+						*time.gmtime(int(utc_ts))[:6])
+				wait = reset - datetime.datetime.now()
+				wait_secs = wait.total_seconds()
+				# Because of rounding and the time passed
+				# between when we did the request and the
+				# "now()", it could happen that we get a very
+				# small negative wait
+				if wait_secs < 0:
+					continue
+				status.warn("We just hit GitHub's rate-limit "
+					"retrieving {}, waiting {:1}min "
+					"(until {})...", url,
+					fmtfloat(wait_secs / 60),
+					reset.strftime('%c'))
+				time.sleep(wait_secs)
+				continue
+			elif e.getcode() == 304: # ETag matches
+				return None
+			else:
+				status.warn("HTTP error while retrieving {}: "
+						"{}, retrying in {}s...",
+						url, e, wait_secs)
+				time.sleep(wait_secs)
+				continue
+		except IOError as e:
+			status.warn("I/O error while retrieving {}: {}, "
+					"retrying in {}s...",
+					url, e, wait_secs)
+			time.sleep(wait_secs)
+			continue
+		break
+	else:
+		sys.stderr.write("Too many retries, giving up!\n")
+		sys.exit(10)
+	return r
 
 
 class Status(status_base):
