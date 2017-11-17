@@ -79,6 +79,10 @@ OPTIONS
 \-P PASS, --password PASS
   GitHub password to use to authenticate
 
+\-a MEDIATYPE, --accept MEDIATYPE
+  media type to accept (useful to use GitHub API previews) (default:
+  application/json)
+
 \-D DIR, --script-dir DIR
   directory where to search for scripts; can be used multiple times, last
   option has priority over the previous ones. The `script_dirs` in the
@@ -131,6 +135,23 @@ looked up in them:
   better error messages in your scripts. If you need more details about the
   error you can use its attributes: `message`, `documentation_url` and
   `errors`.
+
+  For advanced users, the `rq` object offer a few more tools:
+
+  * A custom `Accept` header can be used by seting the `accept` attribute. This
+    attribute won't change until you update it again.
+
+  * Other custom headers can be added by adding elements to the `headers`
+    attribute (`list`). Each element should be a 2-items `tuple` with the
+    header name and value (a list is used because for some headers can be
+    specified more than once).
+
+  * There is a version of each `get()`, `post()`, etc. that returns also the
+    HTTP response (in particular the headers). These fuctions are called
+    `get_full()`, `post_full()`, etc. and they return a `tuple` with
+    a responses `list` as first element (more than once response can be
+    returned if the request was paginated) and the actual JSON obect (same as
+    with the nono-\ `_full` versions) as the second element.
 
   `args` is the raw command line arguments that follows the script in the
   command line call. You can use regular Python facilities to parse the
