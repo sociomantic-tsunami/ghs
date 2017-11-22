@@ -620,7 +620,7 @@ if __name__ == '__main__':
 		main()
 	except urllib2.HTTPError as e:
 		print e
-		print e.read()
 		print e.geturl()
 		print e.headers
+		print e.read()
 
