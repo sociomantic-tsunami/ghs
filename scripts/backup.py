@@ -191,17 +191,18 @@ class Backup:
 			**kwa)
 		try:
 			projs, _ = write_url(path, state='all')
-			for proj in projs:
-				write_url(proj['url'])
-				columns, local = write_url(proj['columns_url'])
-				for col in columns:
-					write_url(col['cards_url'])
 		except HTTPError as e:
 			if e.getcode() == 410:
 				status.verbose('Skipped disabled {}',
 						self.zippath(path))
 			else:
 				raise e
+		else:
+			for proj in projs:
+				write_url(proj['url'])
+				columns, local = write_url(proj['columns_url'])
+				for col in columns:
+					write_url(col['cards_url'])
 
 	def backup_teams(self, path):
 		local = False
