@@ -284,9 +284,12 @@ class RequestManager:
 	# For advanced usage, you can try upcoming API changes by using:
 	# "application/vnd.github.ironman-preview+json" for example
 	accept = "application/json"
-	# This field can be used by advanced users to set extra headers to be
-	# sent in the next request
+	# These fields can be used by advanced users to set extra headers to be
+	# sent in the next request (both are cleaned after the first request)
 	headers = []
+	unredirected_headers = []
+	# If true, GitHub headers won't be redirected
+	unredirect_github_headers = False
 
 	def __init__(self, base_url, oauthtoken=None,
 			username=None, password=None):
@@ -306,17 +309,23 @@ class RequestManager:
 	# Accept (both to json) and Content-Length).
 	def auth_urlopen(self, url, method, body):
 		req = urllib2.Request(url, body)
+		add_gh_header = req.add_header
+		if self.unredirect_github_headers:
+			add_gh_header = req.add_unredirected_header
 		if self.basic_auth:
-			req.add_header("Authorization", self.basic_auth)
+			add_gh_header("Authorization", self.basic_auth)
 		elif self.oauthtoken:
-			req.add_header("Authorization", "bearer " +
+			add_gh_header("Authorization", "bearer " +
 					self.oauthtoken)
-		req.add_header("Content-Type", "application/json")
+		add_gh_header("Content-Type", "application/json")
 		req.add_header("Accept", self.accept)
 		req.add_header("Content-Length", str(len(body) if body else 0))
 		for header in self.headers:
 			req.add_header(*header)
+		for header in self.unredirected_headers:
+			req.add_unredirected_header(*header)
 		self.headers = []
+		self.unredirected_headers = []
 		req.get_method = lambda: method.upper()
 		dbg('%s', req.get_full_url())
 		# Hide sensitive information from DEBUG output
@@ -548,6 +557,11 @@ def create_argparser():
 			default=RequestManager.accept,
 			help='media type to accept (useful to use GitHub API '
 			'previews)')
+	parser.add_argument('-H', '--unredirect-github-headers',
+			action='store_true',
+			default=False,
+			help="don't redirect GitHub specific headers if there "
+			"is a redirect")
 	parser.add_argument('-b', '--base-url', metavar='URL',
 			default=argparse.SUPPRESS,
 			help='base URL to use to make GitHub API requests '
@@ -631,6 +645,7 @@ def main():
 
 	rq = RequestManager(config.base_url, config.oauthtoken,
 			config.username, config.password)
+	rq.unredirect_github_headers = args.unredirect_github_headers
 	rq.accept = args.accept
 
 	script = load_script(parser, args, config)
