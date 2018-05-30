@@ -43,7 +43,8 @@ def main(rq, args, config):
 		'provide path components separated by spaces (as different '
 		'arguments)')
 	args = parser.parse_args(args)
-	args.format = args.format.decode('utf-8')
+	if args.format is not None:
+		args.format = args.format.decode('utf-8')
 	args.path = [p.decode('utf-8') for p in args.path]
 	path, opts = parse_args(args.path)
 	verb = __name__ if __name__ in VERBS else args.verb
