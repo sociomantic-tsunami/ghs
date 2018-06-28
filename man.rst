@@ -8,7 +8,7 @@ GitHub Scripts
 --------------
 
 :Author: Leandro Lucarella <leandro.lucarella@sociomantic.com>
-:Copyright: 2014 Sociomantic Labs GmbH
+:Copyright: 2014 dunnhumby Germany GmbH
 :Version: devel
 :Date: |date|
 :Manual section: 1
