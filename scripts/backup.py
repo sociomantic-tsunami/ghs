@@ -178,11 +178,12 @@ class Backup:
 		self.zipfile = None
 		if args.incremental:
 			try:
-				self.zipfile = ZipFile(self.zipfname, 'r')
+				self.zipfile = ZipFile(self.zipfname, 'r', allowZip64=True)
 			except IOError as e:
 				if e.errno != errno.ENOENT:
 					raise e
-		self.newzipfile = ZipFile(self.newzipfname, 'w', ZIP_DEFLATED)
+		self.newzipfile = ZipFile(self.newzipfname, 'w', ZIP_DEFLATED, \
+			allowZip64=True)
 
 	def backup_org(self, org):
 		self.path = org
