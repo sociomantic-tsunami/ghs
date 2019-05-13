@@ -7,7 +7,7 @@ ghs
 GitHub Scripts
 --------------
 
-:Author: Leandro Lucarella <leandro.lucarella@sociomantic.com>
+:Author: Leandro Lucarella <leandro.lucarella@dunnhumby.com>
 :Copyright: 2014 dunnhumby Germany GmbH
 :Version: devel
 :Date: |date|
