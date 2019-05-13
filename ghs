@@ -85,7 +85,7 @@ config = Config()
 # base_url = 'https://api.github.com' # optional
 # debug = True # optional
 # verbose = True # optional
-# username = "YOURNAME-YOURLASTNAME-sociomantic"
+# username = "USER NAME"
 # password = "YOUR SUPER SECRET PASSWORD"
 # # or oauthtoken = 'some super long token given by github'
 # ---
@@ -285,7 +285,8 @@ accepted_methods = ('options', 'head', 'get', 'post', 'patch', 'put', 'delete')
 #
 # Example:
 #
-#    r = req.post('/repos/sociomantic/test/labels/', name=name, color=color)
+#    r = req.post('/repos/sociomantic-tsunami/ghs/labels/', name=name,
+#             color=color)
 #
 # The basic auth has priority over oauthtoken for authentication. If you want
 # to use OAuth just leave `basic_auth` and set `oauthtoken`. To fill the
